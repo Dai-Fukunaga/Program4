@@ -20,12 +20,16 @@ void binary_operation(class symbol_table &symtab, struct parser_val &target, str
 // prototype declaration for undeclared_error function
 void undeclared_error(string variable);
 
+// prototype declaration for llvm_type function
 string llvm_type(Type t);
 
+// prototype declaration for operation_code function
 string operation_code(Type t, char operation);
 
+// prototype declaration for load function
 void load(class symbol_table &symtab, struct parser_val &target, struct parser_val &val);
 
+// prototype declaration for convert function
 void convert(class symbol_table &symtab, struct parser_val &target, struct parser_val &val, Type from, Type to);
 
 // The unique global symbol table.
@@ -86,7 +90,7 @@ statement: expression ';' {
 	symtab.pop();
 } | type IDENTIFIER '=' expression ';' {
 	Symbol *symbol = symtab.get_local($2.code);
-	if (symbol != nullptr) { // if the variable is already declared
+	if (symbol != nullptr) { // if the variable is already declared in the same scope
 		cerr << "cannot declare the same variable" << endl;
 		$$.code = "";
 	} else {
@@ -101,14 +105,14 @@ statement: expression ';' {
 			Variable *var = symtab.make_variable($2.code);
 			$2.code = ""; // identifier's code must be empty after declaration
 			$$.code += "    " + var->location()->name() + " = alloca " + llvm_type($1.type) + "\n";
-			load(symtab, $$, $4);
-			convert(symtab, $$, $4, $4.type, $1.type);
+			load(symtab, $$, $4); // call load code if it is needed
+			convert(symtab, $$, $4, $4.type, $1.type); // call convert code if it is needed
 			$$.code += "    store " + llvm_type($1.type) + " " + $4.addr->name() + ", " + llvm_type($4.type) + " *" + var->location()->name() + "\n";
 		}
 	}
 } | type IDENTIFIER ';' {
 	Symbol *symbol = symtab.get_local($2.code);
-	if (symbol != nullptr) { // if the variable is already declared
+	if (symbol != nullptr) { // if the variable is already declared in the same scope
 		cerr << "cannot declare the same variable" << endl;
 		$$.code = "";
 	} else {
@@ -118,13 +122,13 @@ statement: expression ';' {
 		$$.code = "    " + var->location()->name() + " = alloca " + llvm_type($1.type) + "\n";
 	}
 } | RETURN expression ';' {
-	if ($2.addr == nullptr) {
+	if ($2.addr == nullptr) { // if the expression is incorrect
 		undeclared_error($2.code);
 		$$.code = "";
 	} else {
 		$$.code = $2.code;
-		load(symtab, $$, $2);
-		convert(symtab, $$, $2, $2.type, Type::Int);
+		load(symtab, $$, $2); // call load code if it is needed
+		convert(symtab, $$, $2, $2.type, Type::Int); // call convert code if it is needed
 		$$.code += "    ret i32 " + $2.addr->name() + "\n";
 	}
 } | error ';' { // error is a special token defined by bison
@@ -162,17 +166,17 @@ expression: expression '+' expression {
 		$$.addr = nullptr;
 		$$.type = Type::Unknown;
 	} else {
-		if (dynamic_cast<Variable *>($1.addr) == nullptr) {
+		if (dynamic_cast<Variable *>($1.addr) == nullptr) { // if the left expression is not variable
 			cerr << "left-hand-side of an assignment must be a variable" << endl;
 			$$.code = "";
 			$$.addr = nullptr;
 			$$.type = Type::Unknown;
 		} else {
 			$$.code = $1.code + $3.code;
-			load(symtab, $$, $3);
-			convert(symtab, $$, $3, $3.type, $1.type);
+			load(symtab, $$, $3); // call load if it is needed
+			convert(symtab, $$, $3, $3.type, $1.type); // call convert if it is needed
 			$$.type = $1.type;
-			$$.addr = $1.addr; // attention!!!
+			$$.addr = $1.addr;
 			Variable *var = symtab.make_variable($1.addr->name());
 			$$.code += "    store " + llvm_type($1.type) + " " + $3.addr->name() + ", " + llvm_type($3.type) + " *" + var->location()->name() + "\n";
 		}
@@ -181,16 +185,16 @@ expression: expression '+' expression {
 	if ($2.addr != nullptr) {
 		$$.code = $2.code;
 		load(symtab, $$, $2);
-		if ($2.type == Type::Float) {
+		if ($2.type == Type::Float) { // if expression type is Float
 			$$.addr = symtab.make_temp($2.type);
-			$$.code += "    " + $$.addr->name() + " = fneg float " + $2.addr->name() + "\n";
+			$$.code += "    " + $$.addr->name() + " = fneg float " + $2.addr->name() + "\n"; // call fneg
 			$$.type = $2.type;
-		} else if ($2.type == Type::Int || $2.type == Type::Char) {
+		} else if ($2.type == Type::Int || $2.type == Type::Char) { // if expression type is Int or Char
 			struct parser_val val;
 			val.code = "";
 			val.addr = symtab.make_int_const(0);
 			val.type = Type::Int;
-			binary_operation(symtab, $$, val, $2, '-');
+			binary_operation(symtab, $$, val, $2, '-'); // call "0 - expression"
 		}
 	} else { // if the expression is incorrect
 		undeclared_error($2.code);
@@ -275,13 +279,13 @@ void binary_operation(class symbol_table &symtab, struct parser_val &target, str
 			}
 		}
 		target.code = l_val.code + r_val.code;
-		load(symtab, target, l_val);
-		load(symtab, target, r_val);
+		load(symtab, target, l_val); // call load if it is needed
+		load(symtab, target, r_val); // call load if it is needed
 		if (l_val.type < r_val.type) {
-			convert(symtab, target, l_val, l_val.type, r_val.type);
+			convert(symtab, target, l_val, l_val.type, r_val.type); // call convert to change type
 		}
 		if (l_val.type > r_val.type) {
-			convert(symtab, target, r_val, r_val.type, l_val.type);
+			convert(symtab, target, r_val, r_val.type, l_val.type); // call convert to change type
 		}
 
 		target.addr = symtab.make_temp(l_val.type);
@@ -299,7 +303,7 @@ void binary_operation(class symbol_table &symtab, struct parser_val &target, str
 void undeclared_error(string variable) {
 	static set<string> variables;
 	variables.insert("");
-	if (variables.find(variable) == variables.end()) {
+	if (variables.find(variable) == variables.end()) { // if it is the first time to use this undeclared variable
 		cerr << "'" << variable << "'" << " was not declared" << endl;
 		variables.insert(variable);
 	}
@@ -356,7 +360,7 @@ string operation_code(Type t, char operation) {
 		}
 	} else if (operation == '%') {
 		if (t == Type::Int || t == Type::Char) {
-		return "srem";
+			return "srem";
 		}
 	}
 	return "";
@@ -370,7 +374,7 @@ string operation_code(Type t, char operation) {
  * @param val expression
  */
 void load(class symbol_table &symtab, struct parser_val &target, struct parser_val &val) {
-	if (dynamic_cast<Variable *>(val.addr) != nullptr) {
+	if (dynamic_cast<Variable *>(val.addr) != nullptr) { // if val is Variable
 		Variable *var = symtab.make_variable(val.addr->name());
 		val.type = val.addr->type();
 		val.addr = symtab.make_temp(val.type);
@@ -388,12 +392,12 @@ void load(class symbol_table &symtab, struct parser_val &target, struct parser_v
  * @param to destination type
  */
 void convert(class symbol_table &symtab, struct parser_val &target, struct parser_val &val, Type from, Type to) {
-	if (from < to) {
+	if (from < to) { // if type is not mached
 		string name = val.addr->name();
 		val.type = to;
 		val.addr = symtab.make_temp(to);
 		target.code += "    " + val.addr->name() + (to == Type::Int ? " = sext " : " = sitofp ") + llvm_type(from) + " " + name + " to " + llvm_type(to) + "\n";
-	} else if (from > to) {
+	} else if (from > to) { // if type is not mached
 		string name = val.addr->name();
 		val.type = to;
 		val.addr = symtab.make_temp(to);

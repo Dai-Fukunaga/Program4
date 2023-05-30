@@ -12,3 +12,4 @@
 *.hh
 *.o
 *.zip
+.vocode/*
